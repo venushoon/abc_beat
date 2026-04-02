@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>알파벳 리듬 게임</title>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/react.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/react-dom.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    @keyframes bounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+    }
+
+    @keyframes beatFlash {
+      0%, 100% { background: #eee; }
+      50% { background: #ffeb3b; }
+    }
+
+    @keyframes beatPulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.1); }
+    }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    #root {
+      width: 100%;
+      max-width: 900px;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const AlphabetRhythmGame = () => {
+      const [gameState, setGameState] = useState('start');
+      const [difficulty, setDifficulty] = useState(null);
+      const [currentAlphabetIndex, setCurrentAlphabetIndex] = useState(0);
+      const [score, setScore] = useState(0);
+      const [combo, setCombo] = useState(0);
+      const [maxCombo, setMaxCombo] = useState(0);
+      const [results, setResults] = useState([]);
+      const [gameStartTime, setGameStartTime] = useState(null);
+      const [gameStats, setGameStats] = useState([]);
+      const [isListening, setIsListening] = useState(false);
+
+      const audioContextRef = useRef(null);
+      const beatTimeRef = useRef(0);
+      const isPlayingRef = useRef(false);
+      const recognitionRef = useRef(null);
+
+      const alphabets = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+      const bpmMap = { easy: 60, normal: 120, hard: 160 };
+      const beatInterval = difficulty ? (60000 / bpmMap[difficulty]) : 0;
+
+      const pronunciationGuide = {
+        A: 'ay (에이)', B: 'bee (비)', C: 'see (씨)', D: 'dee (디)',
+        E: 'ee (이)', F: 'ef (에프)', G: 'gee (지)', H: 'aitch (에이취)',
+        I: 'eye (아이)', J: 'jay (제이)', K: 'kay (케이)', L: 'el (엘)',
+        M: 'em (엠)', N: 'en (엔)', O: 'oh (오)', P: 'pee (피)',
+        Q: 'cue (큐)', R: 'ar (알)', S: 'es (에스)', T: 'tee (티)',
+        U: 'you (유)', V: 'vee (비)', W: 'double-you (더블유)', X: 'ex (엑스)',
+        Y: 'why (와이)', Z: 'zee (지)'
+      };
+
+      const initializeAudio = () => {
+        if (!audioContextRef.current) {
+          audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        return audioContextRef.current;
+      };
+
+      const playBeat = () => {
+        const audioContext = initializeAudio();
+        const now = audioContext.currentTime;
+        
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        
+        osc.connect(gain);
+        gain.connect(audioContext.destination);
+        
+        osc.frequency.value = 800;
+        osc.type = 'sine';
+        
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+        
+        osc.start(now);
+        osc.stop(now + 0.1);
+      };
+
+      const playSuccessSound = () => {
+        const audioContext = initializeAudio();
+        const now = audioContext.currentTime;
+        
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        
+        osc.connect(gain);
+        gain.connect(audioContext.destination);
+        
+        osc.frequency.setValueAtTime(600, now);
+        osc.frequency.linearRampToValueAtTime(800, now + 0.1);
+        osc.type = 'sine';
+        
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+        
+        osc.start(now);
+        osc.stop(now + 0.1);
+      };
+
+      const startGame = (diff) => {
+        setDifficulty(diff);
+        setGameState('playing');
+        setCurrentAlphabetIndex(0);
+        setScore(0);
+        setCombo(0);
+        setMaxCombo(0);
+        setResults([]);
+        setGameStartTime(Date.now());
+        isPlayingRef.current = true;
+        
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRecognition) {
+          recognitionRef.current = new SpeechRecognition();
+          recognitionRef.current.continuous = false;
+          recognitionRef.current.interimResults = false;
+          recognitionRef.current.lang = 'en-US';
+        }
+        
+        playBeat();
+        beatTimeRef.current = Date.now();
+      };
+
+      const recognizeSpeech = () => {
+        if (!recognitionRef.current) return;
+
+        setIsListening(true);
+
+        recognitionRef.current.onresult = (event) => {
+          const transcript = event.results[0][0].transcript.toUpperCase();
+          const currentAlphabet = alphabets[currentAlphabetIndex];
+          
+          const isCorrect = transcript.includes(currentAlphabet);
+          const timeSinceBeat = Date.now() - beatTimeRef.current;
+          const isTimingPerfect = Math.abs(timeSinceBeat - beatInterval) < 100;
+          const isTimingGood = Math.abs(timeSinceBeat - beatInterval) < 200;
+          
+          let points = 0;
+          if (isCorrect && isTimingPerfect) {
+            points = 10;
+            playSuccessSound();
+          } else if (isCorrect && isTimingGood) {
+            points = 5;
+            playSuccessSound();
+          }
+
+          setResults(prev => [...prev, {
+            alphabet: currentAlphabet,
+            correct: isCorrect,
+            points: points
+          }]);
+
+          setScore(prev => prev + points);
+          
+          if (points > 0) {
+            setCombo(prev => {
+              const newCombo = prev + 1;
+              setMaxCombo(m => Math.max(m, newCombo));
+              return newCombo;
+            });
+          } else {
+            setCombo(0);
+          }
+
+          setIsListening(false);
+
+          if (currentAlphabetIndex < alphabets.length - 1) {
+            setCurrentAlphabetIndex(prev => prev + 1);
+            playBeat();
+            beatTimeRef.current = Date.now();
+            setTimeout(() => recognizeSpeech(), 500);
+          } else {
+            endGame();
+          }
+        };
+
+        recognitionRef.current.onerror = () => {
+          setIsListening(false);
+          if (currentAlphabetIndex < alphabets.length - 1) {
+            setTimeout(() => recognizeSpeech(), 500);
+          }
+        };
+
+        recognitionRef.current.start();
+      };
+
+      const endGame = () => {
+        isPlayingRef.current = false;
+        
+        const accuracy = results.length > 0 
+          ? Math.round((results.filter(r => r.correct).length / results.length) * 100)
+          : 0;
+        const timeTaken = Math.round((Date.now() - gameStartTime) / 1000);
+        
+        const gameRecord = {
+          score: score,
+          accuracy: accuracy,
+          maxCombo: maxCombo,
+          difficulty: difficulty,
+          timeTaken: timeTaken,
+          date: new Date().toLocaleDateString('ko-KR')
+        };
+
+        const saved = JSON.parse(localStorage.getItem('gameStats') || '[]');
+        localStorage.setItem('gameStats', JSON.stringify([...saved, gameRecord]));
+        
+        setGameState('result');
+      };
+
+      useEffect(() => {
+        const saved = JSON.parse(localStorage.getItem('gameStats') || '[]');
+        setGameStats(saved);
+      }, []);
+
+      useEffect(() => {
+        if (gameState === 'playing' && isPlayingRef.current && currentAlphabetIndex < alphabets.length) {
+          const timer = setTimeout(() => {
+            recognizeSpeech();
+          }, beatInterval / 2);
+          return () => clearTimeout(timer);
+        }
+      }, [gameState, currentAlphabetIndex, beatInterval]);
+
+      const getGrade = (score) => {
+        if (score >= 950) return { grade: 'A+', message: '완벽해요! 정말 훌륭해요! 🌟', color: '#fa709a' };
+        if (score >= 850) return { grade: 'A', message: '아주 잘했어요! 👏', color: '#ffa726' };
+        if (score >= 750) return { grade: 'B', message: '좋아요! 더 연습하면 더 잘할 수 있어요! 💪', color: '#4caf50' };
+        if (score >= 650) return { grade: 'C', message: '괜찮아요! 한 번 더 해볼까요? 🎮', color: '#1976d2' };
+        if (score >= 550) return { grade: 'D', message: '다시 도전해봐요! 화이팅! ⚡', color: '#ab47bc' };
+        return { grade: 'F', message: '아쉬워요. 천천히 시도해보세요. 🐢', color: '#757575' };
+      };
+
+      // SCREEN COMPONENTS
+      const StartScreen = () => (
+        <div style={styles.container}>
+          <div style={styles.card}>
+            <div style={{ fontSize: '4rem', textAlign: 'center', marginBottom: '1rem', animation: 'bounce 2s infinite' }}>🎤</div>
+            <h1 style={styles.title}>알파벳 리듬</h1>
+            <p style={styles.subtitle}>Alphabet Beat Game</p>
+            
+            <p style={{ fontSize: '1.1rem', color: '#666', margin: '2rem 0', lineHeight: '1.8', textAlign: 'center' }}>
+              🎵 리듬에 맞춰<br/>
+              🎤 영어 알파벳을 발음하세요!<br/>
+              🌟 정확한 타이밍 = 더 높은 점수
+            </p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', margin: '2rem 0' }}>
+              <div style={{ background: '#f0f4ff', padding: '1rem', borderRadius: '12px', border: '2px solid #667eea', textAlign: 'center' }}>
+                <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🎯</div>
+                <p style={{ fontSize: '0.9rem', color: '#333', margin: '0', fontWeight: '600' }}>정확한 발음</p>
+              </div>
+              <div style={{ background: '#f0f4ff', padding: '1rem', borderRadius: '12px', border: '2px solid #667eea', textAlign: 'center' }}>
+                <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>⏱️</div>
+                <p style={{ fontSize: '0.9rem', color: '#333', margin: '0', fontWeight: '600' }}>완벽한 타이밍</p>
+              </div>
+            </div>
+
+            <button 
+              onClick={() => setGameState('difficulty')}
+              style={{ ...styles.primaryButton, width: '100%' }}
+            >
+              🚀 게임 시작하기
+            </button>
+          </div>
+        </div>
+      );
+
+      const DifficultyScreen = () => (
+        <div style={styles.container}>
+          <div style={styles.card}>
+            <h2 style={styles.screenTitle}>난이도를 선택하세요</h2>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
+              <div
+                onClick={() => startGame('easy')}
+                style={{ padding: '2rem', background: 'linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%)', borderRadius: '16px', cursor: 'pointer', transition: 'transform 0.2s', border: '3px solid transparent' }}
+                onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-5px)'}
+                onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+              >
+                <div style={{ fontSize: '2.5rem', textAlign: 'center', marginBottom: '1rem' }}>🐢</div>
+                <h3 style={{ textAlign: 'center', color: 'white', fontSize: '1.3rem', margin: '0', fontWeight: '700' }}>쉬움 (Easy)</h3>
+                <p style={{ textAlign: 'center', color: 'rgba(255,255,255,0.9)', fontSize: '0.9rem', margin: '0.5rem 0' }}>⏱️ 60 BPM<br/>여유로운 속도</p>
+                <div style={{ textAlign: 'center', marginTop: '1rem', fontSize: '2rem' }}>★★☆</div>
+              </div>
+
+              <div
+                onClick={() => startGame('normal')}
+                style={{ padding: '2rem', background: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)', borderRadius: '16px', cursor: 'pointer', transition: 'transform 0.2s', border: '3px solid transparent', transform: 'scale(1.05)' }}
+                onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.1)'}
+                onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
+              >
+                <div style={{ fontSize: '2.5rem', textAlign: 'center', marginBottom: '1rem' }}>🎸</div>
+                <h3 style={{ textAlign: 'center', color: 'white', fontSize: '1.3rem', margin: '0', fontWeight: '700' }}>보통 (Normal)</h3>
+                <p style={{ textAlign: 'center', color: 'rgba(255,255,255,0.9)', fontSize: '0.9rem', margin: '0.5rem 0' }}>⏱️ 120 BPM<br/>표준 속도</p>
+                <div style={{ textAlign: 'center', marginTop: '1rem', fontSize: '2rem' }}>★★★</div>
+              </div>
+
+              <div
+                onClick={() => startGame('hard')}
+                style={{ padding: '2rem', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', borderRadius: '16px', cursor: 'pointer', transition: 'transform 0.2s', border: '3px solid transparent' }}
+                onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-5px)'}
+                onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+              >
+                <div style={{ fontSize: '2.5rem', textAlign: 'center', marginBottom: '1rem' }}>⚡</div>
+                <h3 style={{ textAlign: 'center', color: 'white', fontSize: '1.3rem', margin: '0', fontWeight: '700' }}>어려움 (Hard)</h3>
+                <p style={{ textAlign: 'center', color: 'rgba(255,255,255,0.9)', fontSize: '0.9rem', margin: '0.5rem 0' }}>⏱️ 160 BPM<br/>빠른 속도</p>
+                <div style={{ textAlign: 'center', marginTop: '1rem', fontSize: '2rem' }}>★★★★★</div>
+              </div>
+            </div>
+
+            <button 
+              onClick={() => setGameState('start')}
+              style={styles.secondaryButton}
+            >
+              ← 돌아가기
+            </button>
+          </div>
+        </div>
+      );
+
+      const GameplayScreen = () => {
+        const currentAlphabet = alphabets[currentAlphabetIndex];
+        const progress = ((currentAlphabetIndex + 1) / alphabets.length) * 100;
+        
+        return (
+          <div style={styles.container}>
+            <div style={styles.card}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+                <div>
+                  <p style={{ fontSize: '0.9rem', color: '#999', margin: '0' }}>현재 난이도</p>
+                  <h3 style={{ fontSize: '1.5rem', color: '#667eea', margin: '0', fontWeight: '700' }}>
+                    {difficulty === 'easy' ? '쉬움 (Easy) - 60 BPM' : 
+                     difficulty === 'normal' ? '보통 (Normal) - 120 BPM' : 
+                     '어려움 (Hard) - 160 BPM'}
+                  </h3>
+                </div>
+                <button 
+                  onClick={() => {
+                    isPlayingRef.current = false;
+                    setGameState('start');
+                  }}
+                  style={styles.pauseButton}
+                >
+                  ⏸️ 나가기
+                </button>
+              </div>
+
+              <div style={{ marginBottom: '2rem' }}>
+                <p style={{ fontSize: '0.9rem', color: '#666', margin: '0 0 0.5rem' }}>진행도: {currentAlphabetIndex + 1}/26</p>
+                <div style={{ height: '12px', background: '#eee', borderRadius: '6px', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${progress}%`, background: 'linear-gradient(90deg, #667eea, #764ba2)', transition: 'width 0.3s' }}></div>
+                </div>
+              </div>
+
+              <div style={{ textAlign: 'center', margin: '3rem 0' }}>
+                <p style={{ fontSize: '0.9rem', color: '#999', margin: '0' }}>지금 발음할 알파벳</p>
+                <div style={{ fontSize: '5rem', fontWeight: '900', color: '#667eea', margin: '1rem 0', letterSpacing: '10px', animation: 'pulse 0.6s ease-in-out infinite' }}>{currentAlphabet}</div>
+                <p style={{ fontSize: '1.1rem', color: '#666', margin: '0' }}>{pronunciationGuide[currentAlphabet]}</p>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', margin: '2rem 0' }}>
+                <div style={{ width: '60px', height: '60px', background: '#eee', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', animation: 'beatFlash 0.5s ease-in-out infinite' }}>🔊</div>
+                <div style={{ width: '60px', height: '60px', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '1.5rem', animation: 'beatPulse 0.5s ease-in-out infinite' }}>✓</div>
+                <div style={{ width: '60px', height: '60px', background: '#eee', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem' }}>🎵</div>
+              </div>
+
+              <div style={{ background: '#f0f4ff', padding: '1.5rem', borderRadius: '12px', margin: '2rem 0', borderLeft: '4px solid #667eea' }}>
+                <p style={{ fontSize: '0.85rem', color: '#666', margin: '0 0 0.5rem', fontWeight: '600' }}>🎤 음성 인식 상태</p>
+                <p style={{ fontSize: '1.1rem', color: '#667eea', margin: '0', fontWeight: '700' }}>
+                  {isListening ? '인식 중... 잠시만 기다려주세요' : '준비됨'}
+                </p>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', margin: '2rem 0' }}>
+                <div style={{ background: '#fff3e0', padding: '1rem', borderRadius: '12px', border: '2px solid #ffa726' }}>
+                  <p style={{ fontSize: '0.85rem', color: '#999', margin: '0' }}>현재 점수</p>
+                  <p style={{ fontSize: '2rem', color: '#ffa726', margin: '0', fontWeight: '700' }}>{score}</p>
+                </div>
+                <div style={{ background: '#f3e5f5', padding: '1rem', borderRadius: '12px', border: '2px solid #ab47bc' }}>
+                  <p style={{ fontSize: '0.85rem', color: '#999', margin: '0' }}>콤보</p>
+                  <p style={{ fontSize: '2rem', color: '#ab47bc', margin: '0', fontWeight: '700' }}>{combo} 🔥</p>
+                </div>
+              </div>
+
+              <div style={{ background: '#f9f9f9', padding: '1.5rem', borderRadius: '12px' }}>
+                <p style={{ fontSize: '0.9rem', color: '#666', margin: '0 0 1rem', fontWeight: '600' }}>최근 결과</p>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  {results.map((r, i) => (
+                    <span
+                      key={i}
+                      style={{
+                        padding: '6px 12px',
+                        background: r.correct ? '#c8e6c9' : '#ffccbc',
+                        color: r.correct ? '#2e7d32' : '#d84315',
+                        borderRadius: '20px',
+                        fontSize: '0.85rem',
+                        fontWeight: '600'
+                      }}
+                    >
+                      {r.alphabet} {r.correct ? '✓' : '✗'}
+                    </span>
+                  ))}
+                  {currentAlphabetIndex < alphabets.length && (
+                    <span style={{ padding: '6px 12px', background: '#bbdefb', color: '#1565c0', borderRadius: '20px', fontSize: '0.85rem', fontWeight: '600' }}>
+                      {currentAlphabet} ○
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      const ResultScreen = () => {
+        const accuracy = results.length > 0 
+          ? Math.round((results.filter(r => r.correct).length / results.length) * 100)
+          : 0;
+        const gradeInfo = getGrade(score);
+        const timeTaken = Math.round((Date.now() - gameStartTime) / 1000);
+        
+        return (
+          <div style={styles.container}>
+            <div style={styles.card}>
+              <div style={{ fontSize: '3rem', textAlign: 'center', marginBottom: '1rem', animation: 'bounce 0.6s ease-out' }}>🎉</div>
+              <h2 style={styles.resultTitle}>게임 완료!</h2>
+
+              <div style={{ background: `linear-gradient(135deg, ${gradeInfo.color} 0%, #764ba2 100%)`, padding: '2rem', borderRadius: '16px', margin: '2rem 0', textAlign: 'center', color: 'white' }}>
+                <p style={{ color: 'rgba(255,255,255,0.8)', margin: '0 0 0.5rem', fontSize: '0.9rem', fontWeight: '600' }}>최종 등급</p>
+                <div style={{ fontSize: '3rem', margin: '0', fontWeight: '900' }}>{gradeInfo.grade}</div>
+                <p style={{ color: 'rgba(255,255,255,0.9)', margin: '0.5rem 0 0', fontSize: '1.1rem' }}>{gradeInfo.message}</p>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', margin: '2rem 0' }}>
+                <div style={{ background: '#fff3e0', padding: '1.5rem', borderRadius: '12px', border: '2px solid #ffa726', textAlign: 'center' }}>
+                  <p style={{ fontSize: '0.8rem', color: '#999', margin: '0 0 0.5rem', fontWeight: '600' }}>최종 점수</p>
+                  <p style={{ fontSize: '2.2rem', color: '#ffa726', margin: '0', fontWeight: '800' }}>{score}</p>
+                </div>
+                <div style={{ background: '#f3e5f5', padding: '1.5rem', borderRadius: '12px', border: '2px solid #ab47bc', textAlign: 'center' }}>
+                  <p style={{ fontSize: '0.8rem', color: '#999', margin: '0 0 0.5rem', fontWeight: '600' }}>정확도</p>
+                  <p style={{ fontSize: '2.2rem', color: '#ab47bc', margin: '0', fontWeight: '800' }}>{accuracy}%</p>
+                </div>
+                <div style={{ background: '#c8e6c9', padding: '1.5rem', borderRadius: '12px', border: '2px solid #2e7d32', textAlign: 'center' }}>
+                  <p style={{ fontSize: '0.8rem', color: '#999', margin: '0 0 0.5rem', fontWeight: '600' }}>최대 콤보</p>
+                  <p style={{ fontSize: '2.2rem', color: '#2e7d32', margin: '0', fontWeight: '800' }}>{maxCombo} 🔥</p>
+                </div>
+              </div>
+
+              <div style={{ background: '#f9f9f9', padding: '1.5rem', borderRadius: '12px', margin: '2rem 0' }}>
+                <h4 style={{ margin: '0 0 1rem', color: '#333', fontWeight: '700' }}>상세 통계</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <div style={{ borderBottom: '1px solid #eee', paddingBottom: '0.5rem' }}>
+                    <p style={{ fontSize: '0.85rem', color: '#999', margin: '0' }}>정답</p>
+                    <p style={{ fontSize: '1.3rem', color: '#2e7d32', margin: '0', fontWeight: '700' }}>{results.filter(r => r.correct).length}/{results.length}</p>
+                  </div>
+                  <div style={{ borderBottom: '1px solid #eee', paddingBottom: '0.5rem' }}>
+                    <p style={{ fontSize: '0.85rem', color: '#999', margin: '0' }}>오답</p>
+                    <p style={{ fontSize: '1.3rem', color: '#d84315', margin: '0', fontWeight: '700' }}>{results.filter(r => !r.correct).length}/{results.length}</p>
+                  </div>
+                  <div style={{ borderBottom: '1px solid #eee', paddingBottom: '0.5rem' }}>
+                    <p style={{ fontSize: '0.85rem', color: '#999', margin: '0' }}>게임 시간</p>
+                    <p style={{ fontSize: '1.3rem', color: '#1976d2', margin: '0', fontWeight: '700' }}>{timeTaken}초</p>
+                  </div>
+                  <div style={{ borderBottom: '1px solid #eee', paddingBottom: '0.5rem' }}>
+                    <p style={{ fontSize: '0.85rem', color: '#999', margin: '0' }}>날짜</p>
+                    <p style={{ fontSize: '1.3rem', color: '#666', margin: '0', fontWeight: '700' }}>{new Date().toLocaleDateString('ko-KR')}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '2rem' }}>
+                <button 
+                  onClick={() => setGameState('difficulty')}
+                  style={{ ...styles.primaryButton, width: '100%' }}
+                >
+                  🎮 다시 하기
+                </button>
+                <button 
+                  onClick={() => setGameState('stats')}
+                  style={{ ...styles.secondaryButton, width: '100%' }}
+                >
+                  📊 통계보기
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      const StatsScreen = () => {
+        const totalGames = gameStats.length;
+        const avgScore = totalGames > 0 ? Math.round(gameStats.reduce((a, b) => a + b.score, 0) / totalGames) : 0;
+        const maxScore = totalGames > 0 ? Math.max(...gameStats.map(s => s.score)) : 0;
+        
+        const easyStats = gameStats.filter(s => s.difficulty === 'easy');
+        const normalStats = gameStats.filter(s => s.difficulty === 'normal');
+        const hardStats = gameStats.filter(s => s.difficulty === 'hard');
+        
+        const avgEasy = easyStats.length > 0 ? Math.round(easyStats.reduce((a, b) => a + b.accuracy, 0) / easyStats.length) : 0;
+        const avgNormal = normalStats.length > 0 ? Math.round(normalStats.reduce((a, b) => a + b.accuracy, 0) / normalStats.length) : 0;
+        const avgHard = hardStats.length > 0 ? Math.round(hardStats.reduce((a, b) => a + b.accuracy, 0) / hardStats.length) : 0;
+        
+        return (
+          <div style={styles.container}>
+            <div style={styles.card}>
+              <h2 style={styles.screenTitle}>📊 나의 게임 통계</h2>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
+                <div style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', padding: '1.5rem', borderRadius: '12px', textAlign: 'center', color: 'white' }}>
+                  <p style={{ fontSize: '0.85rem', margin: '0 0 0.5rem', opacity: 0.9 }}>총 게임 수</p>
+                  <p style={{ fontSize: '2.2rem', fontWeight: '800', margin: '0' }}>{totalGames}</p>
+                </div>
+                <div style={{ background: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)', padding: '1.5rem', borderRadius: '12px', textAlign: 'center', color: 'white' }}>
+                  <p style={{ fontSize: '0.85rem', margin: '0 0 0.5rem', opacity: 0.9 }}>평균 점수</p>
+                  <p style={{ fontSize: '2.2rem', fontWeight: '800', margin: '0' }}>{avgScore}</p>
+                </div>
+                <div style={{ background: 'linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%)', padding: '1.5rem', borderRadius: '12px', textAlign: 'center', color: 'white' }}>
+                  <p style={{ fontSize: '0.85rem', margin: '0 0 0.5rem', opacity: 0.9 }}>최고 점수</p>
+                  <p style={{ fontSize: '2.2rem', fontWeight: '800', margin: '0' }}>{maxScore}</p>
+                </div>
+              </div>
+
+              <div style={{ background: '#f9f9f9', padding: '1.5rem', borderRadius: '12px', marginBottom: '2rem' }}>
+                <h3 style={{ margin: '0 0 1.5rem', color: '#333', fontWeight: '700' }}>난이도별 성적</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
+                  <div style={{ background: 'white', padding: '1rem', borderRadius: '10px', border: '2px solid #84fab0', textAlign: 'center' }}>
+                    <p style={{ fontSize: '0.85rem', color: '#999', margin: '0 0 0.5rem', fontWeight: '600' }}>🐢 쉬움</p>
+                    <p style={{ fontSize: '1.8rem', color: '#4caf50', margin: '0', fontWeight: '800' }}>{avgEasy}%</p>
+                    <p style={{ fontSize: '0.8rem', color: '#999', margin: '0.5rem 0 0' }}>{easyStats.length}회 플레이</p>
+                  </div>
+                  <div style={{ background: 'white', padding: '1rem', borderRadius: '10px', border: '2px solid #ffa726', textAlign: 'center' }}>
+                    <p style={{ fontSize: '0.85rem', color: '#999', margin: '0 0 0.5rem', fontWeight: '600' }}>🎸 보통</p>
+                    <p style={{ fontSize: '1.8rem', color: '#ff9800', margin: '0', fontWeight: '800' }}>{avgNormal}%</p>
+                    <p style={{ fontSize: '0.8rem', color: '#999', margin: '0.5rem 0 0' }}>{normalStats.length}회 플레이</p>
+                  </div>
+                  <div style={{ background: 'white', padding: '1rem', borderRadius: '10px', border: '2px solid #667eea', textAlign: 'center' }}>
+                    <p style={{ fontSize: '0.85rem', color: '#999', margin: '0 0 0.5rem', fontWeight: '600' }}>⚡ 어려움</p>
+                    <p style={{ fontSize: '1.8rem', color: '#667eea', margin: '0', fontWeight: '800' }}>{avgHard}%</p>
+                    <p style={{ fontSize: '0.8rem', color: '#999', margin: '0.5rem 0 0' }}>{hardStats.length}회 플레이</p>
+                  </div>
+                </div>
+              </div>
+
+              {totalGames > 0 && (
+                <div style={{ background: '#f9f9f9', padding: '1.5rem', borderRadius: '12px' }}>
+                  <h3 style={{ margin: '0 0 1.5rem', color: '#333', fontWeight: '700' }}>🏆 최고 기록</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
+                    {gameStats
+                      .sort((a, b) => b.score - a.score)
+                      .slice(0, 5)
+                      .map((stat, idx) => (
+                        <div key={idx} style={{ background: 'white', padding: '1rem', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontWeight: '600', color: '#333' }}>
+                            {idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : idx === 3 ? '4️⃣' : '5️⃣'} {stat.score}점 - {stat.difficulty === 'easy' ? '쉬움' : stat.difficulty === 'normal' ? '보통' : '어려움'}
+                          </span>
+                          <span style={{ fontSize: '0.85rem', color: '#999' }}>{stat.date}</span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              <button 
+                onClick={() => setGameState('start')}
+                style={{ ...styles.secondaryButton, width: '100%', marginTop: '2rem' }}
+              >
+                ← 돌아가기
+              </button>
+            </div>
+          </div>
+        );
+      };
+
+      return (
+        <div style={styles.app}>
+          {gameState === 'start' && <StartScreen />}
+          {gameState === 'difficulty' && <DifficultyScreen />}
+          {gameState === 'playing' && <GameplayScreen />}
+          {gameState === 'result' && <ResultScreen />}
+          {gameState === 'stats' && <StatsScreen />}
+        </div>
+      );
+    };
+
+    const styles = {
+      app: {
+        fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '1rem'
+      },
+      container: {
+        width: '100%',
+        maxWidth: '900px'
+      },
+      card: {
+        background: 'white',
+        borderRadius: '20px',
+        padding: '3rem 2rem',
+        boxShadow: '0 20px 60px rgba(0,0,0,0.3)'
+      },
+      title: {
+        fontSize: '3rem',
+        textAlign: 'center',
+        color: '#667eea',
+        margin: '0 0 0.5rem',
+        fontWeight: '800',
+        letterSpacing: '-1px'
+      },
+      subtitle: {
+        fontSize: '1.3rem',
+        textAlign: 'center',
+        color: '#764ba2',
+        margin: '0.5rem 0',
+        fontWeight: '600'
+      },
+      screenTitle: {
+        textAlign: 'center',
+        color: '#667eea',
+        fontSize: '2rem',
+        margin: '0 0 2rem',
+        fontWeight: '800'
+      },
+      resultTitle: {
+        color: '#667eea',
+        fontSize: '2rem',
+        margin: '0 0 1rem',
+        textAlign: 'center',
+        fontWeight: '800'
+      },
+      primaryButton: {
+        padding: '16px 40px',
+        fontSize: '1.2rem',
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        color: 'white',
+        border: 'none',
+        borderRadius: '50px',
+        cursor: 'pointer',
+        fontWeight: '700',
+        boxShadow: '0 10px 25px rgba(102, 126, 234, 0.4)',
+        transition: 'transform 0.2s'
+      },
+      secondaryButton: {
+        padding: '12px 24px',
+        background: '#eee',
+        color: '#333',
+        border: 'none',
+        borderRadius: '20px',
+        cursor: 'pointer',
+        fontWeight: '600'
+      },
+      pauseButton: {
+        padding: '10px 20px',
+        background: '#ff6b6b',
+        color: 'white',
+        border: 'none',
+        borderRadius: '20px',
+        cursor: 'pointer',
+        fontWeight: '600'
+      }
+    };
+
+    ReactDOM.render(<AlphabetRhythmGame />, document.getElementById('root'));
+  </script>
+</body>
+</html>
